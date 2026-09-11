@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="de">
+
+<head>
+<meta charset="UTF-8">
+
+<meta name="viewport"
+      content="width=device-width, initial-scale=1.0">
+
+<title>TBS LCD Image Sender</title>
+
+<style>
+
+body {
+    font-family: sans-serif;
+    background: #111;
+    color: white;
+    text-align: center;
+    padding: 20px;
+}
+
+button,
+input {
+    font-size: 18px;
+    margin: 8px;
+    padding: 10px;
+}
+
+canvas {
+    width: 400px;
+    max-width: 95vw;
+
+    image-rendering: pixelated;
+
+    border: 2px solid white;
+
+    background: black;
+}
+
+#status {
+    margin: 15px;
+    font-size: 18px;
+}
+
+</style>
+
+</head>
+
+
+<body>
+
+<h1>TBS LCD Image Viewer</h1>
+
+<p>20 × 16 Pixel · 8 Graustufen</p>
+
+
+<input
+    type="file"
+    id="imageInput"
+    accept="image/*">
+
+
+<br>
+
+
+<button id="connect">
+    USB verbinden
+</button>
+
+
+<button id="send">
+    Bild senden
+</button>
+
+
+<div id="status">
+    Noch nicht verbunden
+</div>
+
+
+<canvas
+    id="preview"
+    width="20"
+    height="16">
+</canvas>
+
+
+<script>
+
+let port = null;
+let writer = null;
+
+const canvas =
+    document.getElementById("preview");
+
+const ctx =
+    canvas.getContext("2d");
+
+ctx.imageSmoothingEnabled = false;
+
+
+// ------------------------------------------------------------
+// Bild auf 20x16 bringen
+// ------------------------------------------------------------
+
+document
+.getElementById("imageInput")
+.addEventListener("change", function(event) {
+
+    const file = event.target.files[0];
+
+    if (!file)
+        return;
+
+    const img = new Image();
+
+    img.onload = function() {
+
+        ctx.clearRect(
+            0,
+            0,
+            20,
+            16
+        );
+
+        ctx.drawImage(
+            img,
+            0,
+            0,
+            20,
+            16
+        );
+
+        document
+        .getElementById("status")
+        .textContent =
+            "Bild bereit.";
+    };
+
+    img.src =
+        URL.createObjectURL(file);
+});
+
+
+// ------------------------------------------------------------
+// USB verbinden
+// ------------------------------------------------------------
+
+document
+.getElementById("connect")
+.addEventListener("click", async function() {
+
+    if (!("serial" in navigator)) {
+
+        alert(
+            "Dieser Browser unterstützt Web Serial nicht."
+        );
+
+        return;
+    }
+
+    try {
+
+        port =
+            await navigator.serial.requestPort();
+
+        await port.open({
+            baudRate: 115200
+        });
+
+        document
+        .getElementById("status")
+        .textContent =
+            "USB verbunden.";
+
+    }
+    catch(error) {
+
+        console.error(error);
+
+        document
+        .getElementById("status")
+        .textContent =
+            "USB-Verbindung fehlgeschlagen.";
+    }
+});
+
+
+// ------------------------------------------------------------
+// Bilddaten erzeugen
+// ------------------------------------------------------------
+
+function createImageData() {
+
+    const pixels =
+        ctx.getImageData(
+            0,
+            0,
+            20,
+            16
+        ).data;
+
+    const data = [];
+
+    for (let i = 0; i < pixels.length; i += 4) {
+
+        const r = pixels[i];
+        const g = pixels[i + 1];
+        const b = pixels[i + 2];
+
+        // Luminanz
+        const brightness =
+            0.299 * r +
+            0.587 * g +
+            0.114 * b;
+
+        // 0..255 -> 0..7
+        const level =
+            Math.round(
+                brightness * 7 / 255
+            );
+
+        data.push(level);
+    }
+
+    return data;
+}
+
+
+// ------------------------------------------------------------
+// Bild senden
+// ------------------------------------------------------------
+
+document
+.getElementById("send")
+.addEventListener("click", async function() {
+
+    if (!port) {
+
+        alert(
+            "Bitte zuerst USB verbinden."
+        );
+
+        return;
+    }
+
+    const image =
+        createImageData();
+
+    const encoder =
+        new TextEncoder();
+
+    try {
+
+        writer =
+            port.writable.getWriter();
+
+
+        // Header
+        await writer.write(
+            encoder.encode("TBSIMG")
+        );
+
+
+        // 320 Pixel senden
+        await writer.write(
+            new Uint8Array(image)
+        );
+
+
+        // Ende
+        await writer.write(
+            encoder.encode("ENDTBS")
+        );
+
+
+        writer.releaseLock();
+
+        writer = null;
+
+
+        document
+        .getElementById("status")
+        .textContent =
+            "Bild gesendet!";
+
+    }
+    catch(error) {
+
+        console.error(error);
+
+        if (writer) {
+            writer.releaseLock();
+            writer = null;
+        }
+
+        document
+        .getElementById("status")
+        .textContent =
+            "Fehler beim Senden.";
+    }
+
+});
+
+</script>
+
+</body>
+</html>
